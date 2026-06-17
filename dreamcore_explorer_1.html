@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ドリームコア・エクスプローラー</title>
+<style>
+  :root{
+    --pink:#ffc9e3;
+    --lav:#cbb7ff;
+    --mint:#bdf3e0;
+    --ink:#241a33;
+  }
+  html,body{margin:0;padding:0;overflow:hidden;background:#0a0612;height:100%;}
+  canvas{display:block;}
+  #scene-canvas{position:fixed;top:0;left:0;width:100%;height:100%;}
+
+  /* ---------- atmosphere overlays ---------- */
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:5;
+    box-shadow:inset 0 0 18vw 4vw rgba(8,4,18,0.85);
+    mix-blend-mode:multiply;
+  }
+  #grain{
+    position:fixed;inset:0;pointer-events:none;z-index:6;opacity:.05;
+    background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.4) 0px,transparent 1px,transparent 2px);
+    mix-blend-mode:overlay;
+  }
+  #colorwash{
+    position:fixed;inset:0;pointer-events:none;z-index:4;
+    background:radial-gradient(ellipse at 50% 30%, rgba(255,201,227,0.06), rgba(189,243,224,0.05) 60%, transparent 80%);
+  }
+
+  /* ---------- whisper text ---------- */
+  #whisper{
+    position:fixed;left:0;right:0;bottom:9%;text-align:center;z-index:8;
+    color:rgba(255,255,255,0.85);
+    font-family:'Georgia','Hiragino Mincho ProN','Yu Mincho',serif;
+    font-style:italic;font-size:1.05rem;letter-spacing:.08em;
+    text-shadow:0 0 12px rgba(255,201,227,.6),0 0 2px rgba(0,0,0,.8);
+    opacity:0;transition:opacity 2.2s ease;pointer-events:none;
+  }
+  #whisper.show{opacity:1;}
+
+  /* ---------- hint / hud ---------- */
+  #hint{
+    position:fixed;left:18px;bottom:16px;z-index:8;color:rgba(255,255,255,.55);
+    font-family:'Courier New',monospace;font-size:12px;letter-spacing:.06em;
+    opacity:0;transition:opacity 1.5s ease;pointer-events:none;
+  }
+  #hint.show{opacity:1;}
+
+  #soundbtn{
+    position:fixed;top:16px;right:16px;z-index:20;
+    width:38px;height:38px;border-radius:50%;
+    background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.25);
+    color:#fff;font-size:16px;cursor:pointer;backdrop-filter:blur(4px);
+  }
+  #soundbtn:hover{background:rgba(255,255,255,0.18);}
+
+  /* ---------- start / pause overlay ---------- */
+  #overlay{
+    position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 40%, #2a1d44 0%, #140d24 55%, #07040c 100%);
+    transition:opacity 1.4s ease;
+  }
+  #overlay.hidden{opacity:0;pointer-events:none;}
+  .panel{text-align:center;color:#fff;font-family:'Georgia',serif;padding:0 24px;}
+  .title{
+    font-size:clamp(2.2rem,7vw,4.2rem);
+    letter-spacing:.18em;font-weight:400;font-style:italic;
+    background:linear-gradient(90deg,var(--pink),var(--lav),var(--mint));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 40px rgba(203,183,255,.35);
+    margin:0 0 6px 0;
+  }
+  .subtitle{
+    font-family:'Courier New',monospace;font-size:.78rem;letter-spacing:.35em;
+    color:rgba(255,255,255,.5);text-transform:uppercase;margin-bottom:42px;
+  }
+  .enter{
+    font-family:'Georgia',serif;font-style:italic;font-size:1.05rem;
+    color:rgba(255,255,255,.85);letter-spacing:.05em;
+    animation:pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:.55;}50%{opacity:1;}}
+  .controls-note{
+    margin-top:30px;font-family:'Courier New',monospace;font-size:11px;
+    color:rgba(255,255,255,.35);letter-spacing:.08em;line-height:1.8;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scene-canvas"></canvas>
+<div id="colorwash"></div>
+<div id="grain"></div>
+<div id="vignette"></div>
+<div id="whisper"></div>
+<div id="hint">W A S D  移動　/　マウス  視点　/　SHIFT  ゆっくり走る　/　ESC  一時停止</div>
+<button id="soundbtn" title="音を消す/出す">🔈</button>
+
+<div id="overlay">
+  <div class="panel">
+    <div class="title">dreamcore</div>
+    <div class="subtitle">— 終わらない場所を歩く —</div>
+    <div class="enter" id="enterText">クリックして、夢の中へ</div>
+    <div class="controls-note">敵もゴールもありません。ただ、歩いて、見るだけです。</div>
+  </div>
+</div>
+
+<script>
+function loadScript(src){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+loadScript('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js')
+  .catch(()=> loadScript('https://cdn.jsdelivr.net/npm/[email protected]/build/three.min.js'))
+  .catch(()=> loadScript('https://unpkg.com/[email protected]/build/three.min.js'))
+  .then(()=>{ initDream(); })
+  .catch(()=>{
+    const t = document.getElementById('enterText');
+    if(t) t.textContent = '読み込みに失敗しました。通信環境を確認し、再読み込みしてください。';
+    const c = document.querySelector('.controls-note');
+    if(c) c.textContent = '(three.js を取得できませんでした)';
+  });
+</script>
+<script>
+function initDream(){
+"use strict";
+
+/* =========================================================================
+   基本セットアップ
+   ========================================================================= */
+const canvas = document.getElementById('scene-canvas');
+const renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene = new THREE.Scene();
+const FOG_BASE = new THREE.Color(0xd9c6ef);
+scene.fog = new THREE.FogExp2(FOG_BASE.getHex(), 0.012);
+
+const camera = new THREE.PerspectiveCamera(74, window.innerWidth/window.innerHeight, 0.1, 4000);
+camera.rotation.order = 'YXZ';
+const PLAYER_HEIGHT = 1.65;
+camera.position.set(0, PLAYER_HEIGHT, 0);
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* =========================================================================
+   ライト
+   ========================================================================= */
+const hemi = new THREE.HemisphereLight(0xffe6f5, 0x4a3a66, 0.95);
+scene.add(hemi);
+const ambient = new THREE.AmbientLight(0xffffff, 0.22);
+scene.add(ambient);
+
+const driftLights = [];
+for(let i=0;i<4;i++){
+  const c = new THREE.Color().setHSL(0.7 + i*0.07, 0.6, 0.75);
+  const pl = new THREE.PointLight(c.getHex(), 1.1, 60, 2);
+  pl.position.set((Math.random()-0.5)*30, 6+Math.random()*4, (Math.random()-0.5)*30);
+  scene.add(pl);
+  driftLights.push({light:pl, phase:Math.random()*Math.PI*2});
+}
+
+/* =========================================================================
+   グラデーション・スカイドーム（ゆっくり色が移ろう夢の空）
+   ========================================================================= */
+const skyGeo = new THREE.SphereBufferGeometry(3500, 24, 16);
+const skyUniforms = {
+  topColor:{value:new THREE.Color(0x8a6fd1)},
+  bottomColor:{value:new THREE.Color(0xffd3ea)},
+  offset:{value:18},
+  exponent:{value:0.55}
+};
+const skyMat = new THREE.ShaderMaterial({
+  uniforms:skyUniforms,
+  side:THREE.BackSide,
+  fog:false,
+  vertexShader:`
+    varying vec3 vWorldPosition;
+    void main(){
+      vec4 worldPosition = modelMatrix * vec4(position,1.0);
+      vWorldPosition = worldPosition.xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform vec3 topColor;
+    uniform vec3 bottomColor;
+    uniform float offset;
+    uniform float exponent;
+    varying vec3 vWorldPosition;
+    void main(){
+      float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
+      gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h,0.0), exponent),0.0)), 1.0);
+    }
+  `
+});
+const sky = new THREE.Mesh(skyGeo, skyMat);
+scene.add(sky);
+
+/* =========================================================================
+   地面（淡い色のカーペット柄テクスチャ）
+   ========================================================================= */
+function makeCarpetTexture(){
+  const size = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const ctx = cv.getContext('2d');
+  const palette = ['#efe2f5','#f7d9ec','#e3eefb','#e9f3ea','#f3e7d8'];
+  ctx.fillStyle = palette[0];
+  ctx.fillRect(0,0,size,size);
+  const tiles = 8, tile = size/tiles;
+  for(let y=0;y<tiles;y++){
+    for(let x=0;x<tiles;x++){
+      ctx.fillStyle = palette[(x+y)%palette.length];
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(x*tile,y*tile,tile,tile);
+    }
+  }
+  ctx.globalAlpha = 1;
+  // soft fleck noise for an old, dreamlike carpet feel
+  for(let i=0;i<1400;i++){
+    const x = Math.random()*size, y = Math.random()*size;
+    ctx.fillStyle = `rgba(255,255,255,${(Math.random()*0.25).toFixed(2)})`;
+    ctx.fillRect(x,y,1.4,1.4);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(260,260);
+  tex.anisotropy = 4;
+  return tex;
+}
+const groundTex = makeCarpetTexture();
+const groundMat = new THREE.MeshStandardMaterial({map:groundTex, roughness:0.92, metalness:0.0});
+const groundGeo = new THREE.PlaneBufferGeometry(4000,4000,1,1);
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+/* soft glow sprite texture, reused for orbs / dust / light blooms */
+function makeGlowTexture(){
+  const size = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.4,'rgba(255,255,255,0.55)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,size,size);
+  return new THREE.CanvasTexture(cv);
+}
+const glowTex = makeGlowTexture();
+
+/* static-noise texture for floating "picture frames" */
+function makeStaticTexture(){
+  const size = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const ctx = cv.getContext('2d');
+  for(let y=0;y<size;y++){
+    for(let x=0;x<size;x++){
+      const v = Math.floor(Math.random()*255);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(x,y,1,1);
+    }
+  }
+  return new THREE.CanvasTexture(cv);
+}
+
+/* =========================================================================
+   ふわふわ漂う塵（パーティクル）
+   ========================================================================= */
+const DUST_COUNT = 260;
+const dustGeo = new THREE.BufferGeometry();
+const dustPos = new Float32Array(DUST_COUNT*3);
+const dustSpeed = new Float32Array(DUST_COUNT);
+for(let i=0;i<DUST_COUNT;i++){
+  dustPos[i*3+0] = (Math.random()-0.5)*60;
+  dustPos[i*3+1] = Math.random()*10;
+  dustPos[i*3+2] = (Math.random()-0.5)*60;
+  dustSpeed[i] = 0.15 + Math.random()*0.35;
+}
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos,3));
+const dustMat = new THREE.PointsMaterial({
+  size:0.22, map:glowTex, transparent:true, opacity:0.55,
+  depthWrite:false, blending:THREE.AdditiveBlending, color:0xfff3fb
+});
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
+
+/* =========================================================================
+   チャンク（無限に続く夢の空間）システム
+   ========================================================================= */
+const CHUNK_SIZE = 50;
+const RENDER_RADIUS = 2;
+const THEMES = ['hallway','field','pool','void','garden'];
+
+const WHISPERS = {
+  hallway:["このドアは、どこにも繋がっていない。","前にも、ここを歩いた気がする。","廊下の先が、思い出せない。"],
+  field:["空が、いつもより近い。","風はないのに、何かが揺れている。","ここに来るのは、初めてじゃない。"],
+  pool:["水面に、誰の顔も映らない。","ここで泳いだ夏を、覚えている気がする。","音だけが、ずっと反響している。"],
+  void:["静寂が、音より大きい。","ここには時間がない。","落ちているのか、浮いているのか分からない。"],
+  garden:["花の匂いがしない。","この庭を、前にも見た気がする。","誰もいないのに、誰かの気配がする。"]
+};
+
+function hashCoords(x,z){
+  let h = (x*374761393 + z*668265263) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pastel(rng, sMin=0.45,sMax=0.7, lMin=0.7, lMax=0.88){
+  const c = new THREE.Color();
+  c.setHSL(rng(), sMin + rng()*(sMax-sMin), lMin + rng()*(lMax-lMin));
+  return c;
+}
+
+function buildDoorFrame(rng, color){
+  const g = new THREE.Group();
+  const w = 3.4 + rng()*1.6, h = 5.5 + rng()*1.8, d = 0.3;
+  const mat = new THREE.MeshStandardMaterial({color, roughness:0.6, metalness:0.05});
+  const postGeo = new THREE.BoxBufferGeometry(0.28, h, d);
+  const left = new THREE.Mesh(postGeo, mat); left.position.set(-w/2,h/2,0);
+  const right = new THREE.Mesh(postGeo, mat); right.position.set(w/2,h/2,0);
+  const top = new THREE.Mesh(new THREE.BoxBufferGeometry(w+0.28,0.3,d), mat);
+  top.position.set(0,h,0);
+  g.add(left,right,top);
+  return g;
+}
+
+function buildHallway(group, rng){
+  const baseColor = pastel(rng);
+  const count = 3 + Math.floor(rng()*3);
+  for(let i=0;i<count;i++){
+    const frame = buildDoorFrame(rng, baseColor.clone().offsetHSL((rng()-0.5)*0.05,0,0));
+    frame.position.set((rng()-0.5)*CHUNK_SIZE*0.8, 0, -CHUNK_SIZE*0.5 + i*(CHUNK_SIZE/count) + rng()*4);
+    frame.rotation.y = (rng()-0.5)*0.5;
+    group.add(frame);
+
+    if(rng() > 0.4){
+      const frTex = makeStaticTexture();
+      const pic = new THREE.Mesh(
+        new THREE.PlaneBufferGeometry(1.1,1.5),
+        new THREE.MeshBasicMaterial({map:frTex, fog:false})
+      );
+      pic.position.set(frame.position.x + (rng()-0.5)*2, 2.6, frame.position.z + 0.4);
+      pic.rotation.y = frame.rotation.y;
+      group.add(pic);
+    }
+  }
+}
+
+function buildField(group, rng){
+  const geoms = [
+    ()=>new THREE.IcosahedronBufferGeometry(0.7+rng()*0.6,0),
+    ()=>new THREE.TorusBufferGeometry(0.6+rng()*0.4,0.18,8,16),
+    ()=>new THREE.OctahedronBufferGeometry(0.7+rng()*0.5,0),
+    ()=>new THREE.BoxBufferGeometry(0.8+rng()*0.6,0.8+rng()*0.6,0.8+rng()*0.6)
+  ];
+  const n = 6 + Math.floor(rng()*5);
+  for(let i=0;i<n;i++){
+    const geo = geoms[Math.floor(rng()*geoms.length)]();
+    const color = pastel(rng,0.4,0.75,0.65,0.85);
+    const mat = new THREE.MeshStandardMaterial({color, roughness:0.4, metalness:0.1, transparent:true, opacity:0.85});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set((rng()-0.5)*CHUNK_SIZE, 1.2+rng()*4, (rng()-0.5)*CHUNK_SIZE);
+    mesh.userData.spin = (rng()-0.5)*0.6;
+    mesh.userData.bobPhase = rng()*Math.PI*2;
+    mesh.userData.bobSpeed = 0.4+rng()*0.5;
+    mesh.userData.baseY = mesh.position.y;
+    group.add(mesh);
+  }
+  // thin light pillars, like stray sunbeams
+  const beams = 2 + Math.floor(rng()*2);
+  for(let i=0;i<beams;i++){
+    const beam = new THREE.Mesh(
+      new THREE.ConeBufferGeometry(2.4, 14, 12, 1, true),
+      new THREE.MeshBasicMaterial({color:0xfff5e8, transparent:true, opacity:0.06, blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide})
+    );
+    beam.position.set((rng()-0.5)*CHUNK_SIZE, 7, (rng()-0.5)*CHUNK_SIZE);
+    group.add(beam);
+  }
+}
+
+function buildPool(group, rng){
+  const waterGeo = new THREE.PlaneBufferGeometry(CHUNK_SIZE*0.55, CHUNK_SIZE*0.55, 24, 24);
+  const waterMat = new THREE.MeshStandardMaterial({
+    color:0x9fd8e8, transparent:true, opacity:0.55, roughness:0.15, metalness:0.2
+  });
+  const water = new THREE.Mesh(waterGeo, waterMat);
+  water.rotation.x = -Math.PI/2;
+  water.position.y = 0.04;
+  water.userData.isWater = true;
+  group.add(water);
+
+  const pillarMat = new THREE.MeshStandardMaterial({color:0xfaf5ee, roughness:0.7});
+  const ring = 5 + Math.floor(rng()*2);
+  const radius = CHUNK_SIZE*0.36;
+  for(let i=0;i<ring;i++){
+    const a = (i/ring)*Math.PI*2 + rng()*0.3;
+    const pillar = new THREE.Mesh(new THREE.CylinderBufferGeometry(0.35,0.4,5.4,10), pillarMat);
+    pillar.position.set(Math.cos(a)*radius, 2.7, Math.sin(a)*radius);
+    group.add(pillar);
+  }
+}
+
+function buildVoid(group, rng){
+  const floor = new THREE.Mesh(
+    new THREE.CircleBufferGeometry(CHUNK_SIZE*0.62, 24),
+    new THREE.MeshBasicMaterial({color:0x140e22, transparent:true, opacity:0.85})
+  );
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = 0.02;
+  group.add(floor);
+
+  const starGeo = new THREE.BufferGeometry();
+  const n = 90;
+  const pos = new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    pos[i*3+0]=(rng()-0.5)*CHUNK_SIZE;
+    pos[i*3+1]=1+rng()*9;
+    pos[i*3+2]=(rng()-0.5)*CHUNK_SIZE;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+    size:0.18, map:glowTex, color:0xffffff, transparent:true,
+    depthWrite:false, blending:THREE.AdditiveBlending
+  }));
+  group.add(stars);
+
+  const orbCount = 2+Math.floor(rng()*2);
+  for(let i=0;i<orbCount;i++){
+    const c = pastel(rng,0.5,0.8,0.6,0.8);
+    const orb = new THREE.Mesh(
+      new THREE.SphereBufferGeometry(0.9+rng()*0.6,16,16),
+      new THREE.MeshStandardMaterial({color:c, emissive:c, emissiveIntensity:0.9, roughness:0.3})
+    );
+    orb.position.set((rng()-0.5)*CHUNK_SIZE*0.7, 2+rng()*3, (rng()-0.5)*CHUNK_SIZE*0.7);
+    orb.userData.bobPhase = rng()*Math.PI*2;
+    orb.userData.bobSpeed = 0.3+rng()*0.3;
+    orb.userData.baseY = orb.position.y;
+    group.add(orb);
+  }
+}
+
+function buildGarden(group, rng){
+  const n = 22+Math.floor(rng()*12);
+  for(let i=0;i<n;i++){
+    const c = pastel(rng,0.45,0.75,0.7,0.9);
+    const flower = new THREE.Group();
+    const stem = new THREE.Mesh(new THREE.CylinderBufferGeometry(0.03,0.03,0.6,5), new THREE.MeshStandardMaterial({color:0x9fcf9f}));
+    stem.position.y = 0.3;
+    const head = new THREE.Mesh(new THREE.SphereBufferGeometry(0.16,8,8), new THREE.MeshStandardMaterial({color:c, roughness:0.5}));
+    head.position.y = 0.62;
+    flower.add(stem, head);
+    flower.position.set((rng()-0.5)*CHUNK_SIZE, 0, (rng()-0.5)*CHUNK_SIZE);
+    flower.scale.setScalar(1.4+rng()*1.4);
+    group.add(flower);
+  }
+  const patch = new THREE.Mesh(
+    new THREE.PlaneBufferGeometry(10,10),
+    new THREE.MeshBasicMaterial({map:glowTex, color:0xffd6ee, transparent:true, opacity:0.18, depthWrite:false, blending:THREE.AdditiveBlending})
+  );
+  patch.rotation.x = -Math.PI/2;
+  patch.position.set((rng()-0.5)*CHUNK_SIZE*0.6, 0.1, (rng()-0.5)*CHUNK_SIZE*0.6);
+  group.add(patch);
+}
+
+const BUILDERS = {hallway:buildHallway, field:buildField, pool:buildPool, void:buildVoid, garden:buildGarden};
+
+const chunkMap = new Map();
+let lastCenterKey = null;
+
+function disposeGroup(group){
+  group.traverse(obj=>{
+    if(obj.geometry) obj.geometry.dispose();
+    if(obj.material){
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m=>{ if(m.map) m.map.dispose(); m.dispose(); });
+    }
+  });
+}
+
+function createChunk(cx, cz){
+  const seed = hashCoords(cx, cz);
+  const rng = mulberry32(seed);
+  const theme = THEMES[Math.floor(rng()*THEMES.length)];
+  const group = new THREE.Group();
+  group.position.set(cx*CHUNK_SIZE, 0, cz*CHUNK_SIZE);
+  BUILDERS[theme](group, rng);
+  scene.add(group);
+  chunkMap.set(cx+','+cz, {group, theme, cx, cz});
+}
+
+function showWhisper(theme){
+  const lines = WHISPERS[theme];
+  if(!lines) return;
+  const line = lines[Math.floor(Math.random()*lines.length)];
+  const el = document.getElementById('whisper');
+  el.textContent = line;
+  el.classList.add('show');
+  clearTimeout(showWhisper._t);
+  showWhisper._t = setTimeout(()=> el.classList.remove('show'), 4200);
+}
+
+function updateChunks(){
+  const cx = Math.floor(camera.position.x / CHUNK_SIZE);
+  const cz = Math.floor(camera.position.z / CHUNK_SIZE);
+  const centerKey = cx+','+cz;
+
+  for(let dx=-RENDER_RADIUS; dx<=RENDER_RADIUS; dx++){
+    for(let dz=-RENDER_RADIUS; dz<=RENDER_RADIUS; dz++){
+      const key = (cx+dx)+','+(cz+dz);
+      if(!chunkMap.has(key)) createChunk(cx+dx, cz+dz);
+    }
+  }
+  chunkMap.forEach((entry, key)=>{
+    if(Math.abs(entry.cx-cx) > RENDER_RADIUS+1 || Math.abs(entry.cz-cz) > RENDER_RADIUS+1){
+      scene.remove(entry.group);
+      disposeGroup(entry.group);
+      chunkMap.delete(key);
+    }
+  });
+
+  if(centerKey !== lastCenterKey){
+    lastCenterKey = centerKey;
+    const center = chunkMap.get(centerKey);
+    if(center) showWhisper(center.theme);
+  }
+}
+
+/* =========================================================================
+   操作（マウス視点 + WASD移動、ふわふわした夢の中の動き）
+   ========================================================================= */
+let yaw = 0, pitch = 0;
+const keys = {};
+let started = false;
+const velocity = new THREE.Vector3();
+let bobPhase = 0;
+
+document.addEventListener('keydown', e=>{ keys[e.code]=true; });
+document.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+document.addEventListener('mousemove', e=>{
+  if(document.pointerLockElement !== canvas) return;
+  yaw -= e.movementX * 0.0022;
+  pitch -= e.movementY * 0.0022;
+  pitch = Math.max(-1.3, Math.min(1.3, pitch));
+});
+
+const overlay = document.getElementById('overlay');
+const enterText = document.getElementById('enterText');
+const hint = document.getElementById('hint');
+
+function enterDream(){
+  canvas.requestPointerLock();
+  startAudio();
+  if(!started){
+    started = true;
+    overlay.classList.add('hidden');
+    hint.classList.add('show');
+    setTimeout(()=> hint.classList.remove('show'), 7000);
+  }
+}
+overlay.addEventListener('click', enterDream);
+
+document.addEventListener('pointerlockchange', ()=>{
+  if(document.pointerLockElement === canvas){
+    overlay.classList.add('hidden');
+  } else if(started){
+    enterText.textContent = 'クリックして、夢に戻る';
+    overlay.classList.remove('hidden');
+  }
+});
+
+function updateMovement(delta){
+  const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+  const move = new THREE.Vector3();
+  if(keys['KeyW']||keys['ArrowUp'])    move.add(fwd);
+  if(keys['KeyS']||keys['ArrowDown'])  move.sub(fwd);
+  if(keys['KeyD']||keys['ArrowRight']) move.add(right);
+  if(keys['KeyA']||keys['ArrowLeft'])  move.sub(right);
+
+  if(move.lengthSq() > 0) move.normalize();
+  const speed = (keys['ShiftLeft']||keys['ShiftRight']) ? 6.0 : 3.2;
+  const target = move.multiplyScalar(speed);
+  velocity.lerp(target, 1 - Math.pow(0.0015, delta));
+
+  camera.position.x += velocity.x * delta;
+  camera.position.z += velocity.z * delta;
+
+  const speedLen = Math.min(velocity.length(), 6);
+  bobPhase += delta * (1.6 + speedLen*0.5);
+  camera.position.y = PLAYER_HEIGHT + Math.sin(bobPhase) * 0.035 * (speedLen/4);
+
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+}
+
+/* =========================================================================
+   音（控えめなドローンと白色雑音、夢の中の静けさ）
+   ========================================================================= */
+let audioCtx = null, masterGain = null, soundOn = true;
+function startAudio(){
+  if(audioCtx) { if(audioCtx.state==='suspended') audioCtx.resume(); return; }
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.18;
+  masterGain.connect(audioCtx.destination);
+
+  const lowpass = audioCtx.createBiquadFilter();
+  lowpass.type = 'lowpass';
+  lowpass.frequency.value = 900;
+  lowpass.connect(masterGain);
+
+  const freqs = [98, 147, 196];
+  freqs.forEach((f,i)=>{
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = f;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.06;
+    osc.connect(g); g.connect(lowpass);
+    osc.start();
+
+    const lfo = audioCtx.createOscillator();
+    lfo.frequency.value = 0.04 + i*0.015;
+    const lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 6;
+    lfo.connect(lfoGain); lfoGain.connect(osc.detune);
+    lfo.start();
+  });
+
+  // soft filtered noise, like distant tape hiss
+  const bufferSize = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<bufferSize;i++) data[i] = Math.random()*2-1;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer; noise.loop = true;
+  const bandpass = audioCtx.createBiquadFilter();
+  bandpass.type = 'bandpass'; bandpass.frequency.value = 1200; bandpass.Q.value = 0.6;
+  const noiseGain = audioCtx.createGain();
+  noiseGain.gain.value = 0.025;
+  noise.connect(bandpass); bandpass.connect(noiseGain); noiseGain.connect(masterGain);
+  noise.start();
+}
+
+document.getElementById('soundbtn').addEventListener('click', (e)=>{
+  e.stopPropagation();
+  soundOn = !soundOn;
+  if(masterGain) masterGain.gain.value = soundOn ? 0.18 : 0.0;
+  e.currentTarget.textContent = soundOn ? '🔈' : '🔇';
+  if(!audioCtx) startAudio();
+});
+
+/* =========================================================================
+   メインループ
+   ========================================================================= */
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.1);
+  elapsed += delta;
+
+  if(started) updateMovement(delta);
+  updateChunks();
+
+  // slowly cycling pastel dream-sky
+  const hueTop = (elapsed*0.008) % 1;
+  const hueBottom = (hueTop + 0.08) % 1;
+  skyUniforms.topColor.value.setHSL(hueTop, 0.45, 0.62);
+  skyUniforms.bottomColor.value.setHSL(hueBottom, 0.55, 0.85);
+  scene.fog.color.copy(skyUniforms.bottomColor.value);
+
+  // drifting point lights
+  driftLights.forEach(d=>{
+    d.phase += delta*0.3;
+    d.light.position.y = 5 + Math.sin(d.phase)*2;
+    d.light.intensity = 0.9 + Math.sin(d.phase*1.3)*0.3;
+  });
+
+  // dust motes drifting and recycling near the player
+  const posAttr = dustGeo.attributes.position;
+  for(let i=0;i<DUST_COUNT;i++){
+    let y = posAttr.array[i*3+1] + dustSpeed[i]*delta*0.4;
+    if(y > 9) y = 0;
+    posAttr.array[i*3+1] = y;
+    posAttr.array[i*3+0] += Math.sin(elapsed*0.5+i)*0.002;
+  }
+  dust.position.x = camera.position.x;
+  dust.position.z = camera.position.z;
+  posAttr.needsUpdate = true;
+
+  // animate chunk contents (spinning shapes, bobbing orbs, rippling water)
+  chunkMap.forEach(entry=>{
+    entry.group.children.forEach(obj=>{
+      if(obj.userData.spin !== undefined){
+        obj.rotation.x += obj.userData.spin*delta;
+        obj.rotation.y += obj.userData.spin*delta*0.7;
+      }
+      if(obj.userData.bobPhase !== undefined){
+        obj.userData.bobPhase += delta*obj.userData.bobSpeed;
+        obj.position.y = obj.userData.baseY + Math.sin(obj.userData.bobPhase)*0.4;
+      }
+      if(obj.userData.isWater){
+        obj.material.opacity = 0.5 + Math.sin(elapsed*0.6)*0.05;
+      }
+    });
+  });
+
+  renderer.render(scene, camera);
+}
+animate();
+
+}
+</script>
+</body>
+</html>
